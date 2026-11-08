@@ -8,6 +8,7 @@ import os
 import secrets
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -81,7 +82,7 @@ def test_health_catalog_and_unauthorized_routes():
         assert anonymous.post("/api/children", json={"nickname": "Milo", "age_band": "7-8"}).status_code == 401
         assert anonymous.post("/api/pair", json={"code": "AAAA-BBBB"}).status_code == 401
         assert anonymous.get("/api/device").status_code == 401
-        assert anonymous.post("/api/device/start").status_code == 401
+        assert anonymous.post("/api/device/start", json={"request_id": str(uuid4())}).status_code == 401
         assert anonymous.post("/api/device/pairing-code").status_code == 401
 
 
@@ -135,7 +136,7 @@ def test_families_cannot_access_or_select_each_others_children(parent):
         assert other_state["selection"] is None
         assert other.post("/api/selection", json={"child_id": first_child["id"], "subject_id": "math", "goal_id": "share-equally"}).status_code == 404
         assert other.get("/api/parent").json()["selection"] is None
-        assert cube.post("/api/device/start").json()["session"]["child"] == first_child
+        assert cube.post("/api/device/start", json={"request_id": str(uuid4())}).json()["session"]["child"] == first_child
 
 
 def test_unpaired_and_missing_selection_are_actionable(parent):
@@ -143,9 +144,9 @@ def test_unpaired_and_missing_selection_are_actionable(parent):
         created = provision(cube)
         state = cube.get("/api/device").json()
         assert state["paired"] is False and state["family"] is None
-        assert cube.post("/api/device/start").status_code == 409
+        assert cube.post("/api/device/start", json={"request_id": str(uuid4())}).status_code == 409
         assert parent.post("/api/pair", json={"code": created["pairing_code"]}).status_code == 200
-        missing = cube.post("/api/device/start")
+        missing = cube.post("/api/device/start", json={"request_id": str(uuid4())})
         assert missing.status_code == 409
         assert missing.json()["detail"] == "Ask your parent to choose a child and learning goal."
         with database.connect() as db:
@@ -203,7 +204,7 @@ def test_selection_and_tokens_survive_closed_parent_and_new_app_instances():
         assert not restarted_mac.cookies
         device = restarted_mac.get("/api/device").json()
         assert device["paired"] is True and device["family"] == family
-        started = restarted_mac.post("/api/device/start")
+        started = restarted_mac.post("/api/device/start", json={"request_id": str(uuid4())})
         assert started.status_code == 201
         session = started.json()["session"]
         assert {key: session[key] for key in ("child", "subject", "goal")} == expected
@@ -220,9 +221,13 @@ def test_start_reads_latest_selection_and_preserves_previous_snapshot(parent):
         milo = child(parent)
         nora = child(parent, "Nora", "9-10")
         old_selection = choose(parent, milo)
-        first = cube.post("/api/device/start").json()["session"]
+        first = cube.post("/api/device/start", json={"request_id": str(uuid4())}).json()["session"]
         new_selection = choose(parent, nora, "history", "put-events-in-order")
-        second = cube.post("/api/device/start").json()["session"]
+        stopped = cube.post(f"/api/device/session/{first['id']}/action", json={
+            "request_id": str(uuid4()), "kind": "stop", "revision": first["revision"],
+        })
+        assert stopped.status_code == 200
+        second = cube.post("/api/device/start", json={"request_id": str(uuid4())}).json()["session"]
         assert first["id"] != second["id"]
         assert {key: second[key] for key in ("child", "subject", "goal")} == new_selection
         with database.connect() as db:
@@ -238,7 +243,7 @@ def test_expired_parent_sessions_and_wrong_device_tokens_are_rejected(parent):
     with TestClient(create_app()) as cube:
         cube.headers["Authorization"] = "Bearer invented-token"
         assert cube.get("/api/device").status_code == 401
-        assert cube.post("/api/device/start").status_code == 401
+        assert cube.post("/api/device/start", json={"request_id": str(uuid4())}).status_code == 401
 
 
 def test_cross_origin_mutations_are_rejected(parent):

@@ -1,0 +1,2 @@
+# 0.3.44 ships an official macOS universal2 wheel for ARM and Intel.
+vosk==0.3.44

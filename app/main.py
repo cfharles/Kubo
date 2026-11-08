@@ -1,4 +1,4 @@
-"""Kubo's first milestone: parent choice persisted and loaded by a paired cube."""
+"""Parent choice, paired cubes and recoverable tutoring sessions."""
 
 import os
 from contextlib import asynccontextmanager
@@ -8,13 +8,13 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import database
+from . import database, sessions
 from .catalog import SUBJECTS, find_goal
 from .security import (
     new_pairing_code,
@@ -191,7 +191,7 @@ async def lifespan(app):
 
 
 def create_app():
-    app = FastAPI(title="Kubo", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Kubo", version="0.2.0", lifespan=lifespan)
 
     @app.middleware("http")
     async def same_origin_and_no_cache(request, call_next):
@@ -339,18 +339,56 @@ def create_app():
         return {"device": public_device(device)}
 
     @app.post("/api/device/start", status_code=201)
-    def start(device=Depends(cube_device), db=Depends(get_db)):
-        if device["family_id"] is None:
-            raise HTTPException(409, "Pair this cube with your family before starting.")
-        selection = selection_for(db, device["family_id"])
-        if selection is None:
-            raise HTTPException(409, "Ask your parent to choose a child and learning goal.")
-        session = db.execute(
-            """INSERT INTO learning_sessions (id, device_id, family_id, selection_snapshot)
-               VALUES (%s, %s, %s, %s) RETURNING id, started_at""",
-            (uuid4(), device["id"], device["family_id"], Jsonb(selection)),
-        ).fetchone()
-        return {"session": {"id": str(session["id"]), **selection, "started_at": session["started_at"]}}
+    def start(body: sessions.StartCommand, request: Request, device=Depends(cube_device), db=Depends(get_db)):
+        return sessions.start(db, device, body, request.headers["authorization"].partition(" ")[2], selection_for)
+
+    @app.get("/api/device/session")
+    def active_session(device=Depends(cube_device), db=Depends(get_db)):
+        return {"session": sessions.visible(sessions.active(db, device))}
+
+    @app.get("/api/device/session/{session_id}")
+    def get_session(session_id: UUID, device=Depends(cube_device), db=Depends(get_db)):
+        return {"session": sessions.visible(sessions.owned(db, device, session_id))}
+
+    @app.get("/api/device/receipts/{request_id}")
+    def get_receipt(request_id: UUID, device=Depends(cube_device), db=Depends(get_db)):
+        stored = sessions.receipt(db, device, request_id)
+        if not stored:
+            raise HTTPException(404, "This command has no completed receipt on this cube.")
+        return stored["response"]
+
+    @app.post("/api/device/session/{session_id}/action")
+    def act(session_id: UUID, body: sessions.Action, request: Request, device=Depends(cube_device), db=Depends(get_db)):
+        return sessions.action(db, device, session_id, body, request.headers["authorization"].partition(" ")[2])
+
+    @app.get("/api/children/{child_id}/reports")
+    def child_reports(child_id: UUID, family=Depends(parent_family), db=Depends(get_db)):
+        return sessions.reports(db, family, child_id)
+
+    @app.get("/api/device/session/{session_id}/audio")
+    def session_audio(session_id: UUID, revision: int = Query(ge=0), device=Depends(cube_device), db=Depends(get_db)):
+        from .speech import speak
+        row = sessions.owned(db, device, session_id)
+        sessions.ensure_current(row, revision)
+        state = row["lesson_state"]
+        if not state or not state.get("prompt"):
+            raise HTTPException(409, "There is no spoken prompt for this session.")
+        return Response(speak(state["prompt"]), media_type="audio/wav")
+
+    @app.post("/api/device/session/{session_id}/transcribe")
+    async def session_transcribe(session_id: UUID, request: Request, device=Depends(cube_device), db=Depends(get_db)):
+        from .speech import transcribe
+        row = await run_in_threadpool(sessions.owned, db, device, session_id)
+        if row["ended_at"] or not row["lesson_state"]:
+            raise HTTPException(409, "Start a spoken lesson before recording an answer.")
+        if request.headers.get("content-type", "").split(";")[0].strip().lower() != "audio/wav":
+            raise HTTPException(415, "Send a mono 16 kHz PCM WAV recording.")
+        wav = bytearray()
+        async for chunk in request.stream():
+            if len(wav) + len(chunk) > 1_000_000:
+                raise HTTPException(413, "That recording is too long. Try a shorter answer.")
+            wav.extend(chunk)
+        return await run_in_threadpool(transcribe, bytes(wav))
 
     @app.get("/", include_in_schema=False)
     def home():

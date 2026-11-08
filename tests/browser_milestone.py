@@ -15,6 +15,8 @@ import secrets
 import subprocess
 import sys
 import time
+import tempfile
+import wave
 import uuid
 from urllib.parse import urlparse
 
@@ -39,7 +41,7 @@ class Server:
         tls_args = ["--ssl-certfile", str(ROOT / ".local-certs/server.pem"),
                     "--ssl-keyfile", str(ROOT / ".local-certs/server-key.pem")] if self.tls else []
         self.process = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
+            [sys.executable, "-m", "uvicorn", "browser_fixture:app_factory", "--factory", "--app-dir", "tests", "--host", "127.0.0.1",
              "--port", str(self.port), "--timeout-graceful-shutdown", "3", *tls_args], cwd=ROOT, env=self.env,
             stdout=self.log, stderr=subprocess.STDOUT,
         )
@@ -90,8 +92,17 @@ def main():
 
     try:
         server.start()
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=not args.headed)
+        with sync_playwright() as p, tempfile.TemporaryDirectory() as tmp:
+            quiet_input = Path(tmp) / "silence.wav"
+            with wave.open(str(quiet_input), "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(16000)
+                wav.writeframes(bytes(2 * 16000))
+            browser = p.chromium.launch(headless=not args.headed, args=[
+                "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
+                "--use-file-for-fake-audio-capture=" + str(quiet_input),
+            ])
             phone = browser.new_context(viewport={"width": 390, "height": 844},
                                         is_mobile=True, has_touch=True, ignore_https_errors=args.tls)
             desktop = browser.new_context(viewport={"width": 1280, "height": 900}, ignore_https_errors=args.tls)
@@ -139,23 +150,59 @@ def main():
             assert parent.evaluate("document.querySelector('#family-heading').getBoundingClientRect().top >= document.querySelector('.parent-header').getBoundingClientRect().bottom"), "Family heading overlaps the header"
             parent.screenshot(path=str(args.output_dir / "parent-saved-goal.png"), full_page=True)
             parent.close()
+            # Drop the HTTP response after the real server commits, as with a broken Wi-Fi link.
+            # The browser must write its intent before POST and recover the original receipt.
+            cube.get_by_label("Use microphone for this story").uncheck()
+            lost = {}
+            def lose_response(route):
+                response = route.fetch()
+                assert response.ok
+                lost["response"] = response.json()["session"]
+                route.abort("failed")
+            cube.route("**/api/device/start", lose_response, times=1)
             cube.get_by_role("button", name="Start cube", exact=True).click()
+            expect(cube.get_by_role("button", name="Reconnect and recover")).to_be_visible()
+            start_request = cube.evaluate("JSON.parse(localStorage.getItem('kubo_pending_request'))")
+            assert start_request["kind"] == "start"
+            cube.reload()
             expect(cube.locator("#session-summary")).to_contain_text("Sam")
+            original_id = lost["response"]["id"]
+            assert cube.evaluate("localStorage.getItem('kubo_last_session')") == original_id
+            assert cube.evaluate("localStorage.getItem('kubo_pending_request')") is None
+            passed("Lost committed Start response; reload restored exactly that session and cleared its pending UUID")
             expect(cube.locator("#session-summary")).to_contain_text("Ages 7–8")
             expect(cube.locator("#session-summary")).to_contain_text("English")
             expect(cube.locator("#session-summary")).to_contain_text("Explain a character")
             passed("Closed parent page; cube loaded Sam, ages 7–8, English character-choice goal")
 
+            opening = cube.locator("#current-question").inner_text()
+            cube.get_by_role("button", name="Hint", exact=True).click()
+            expect(cube.locator("#current-prompt")).to_contain_text("raindrop")
+            expect(cube.locator("#current-question")).to_have_text(opening)
+            cube.get_by_role("button", name="Repeat", exact=True).click()
+            expect(cube.locator("#current-question")).to_have_text(opening)
+            cube.locator("#typed-controls summary").click()
+            cube.get_by_label("Test answer", exact=True).fill("To keep the drawing dry.")
+            cube.route("**/api/device/session/*/action", lose_response, times=1)
+            cube.get_by_role("button", name="Send test answer").click()
+            expect(cube.get_by_role("button", name="Reconnect and recover")).to_be_visible()
+            pending = cube.evaluate("JSON.parse(localStorage.getItem('kubo_pending_request'))")
+            assert pending["kind"] == "answer" and "text" not in pending
+            assert "drawing dry" not in cube.evaluate("JSON.stringify(localStorage)")
+            followup = lost["response"]["lesson"]["question"]
+            assert followup != opening
+
             server.stop()
             server.start()
             assert server.pids[0] != server.pids[1]
             cube.reload()
-            expect(cube.get_by_role("button", name="Start cube", exact=True)).to_be_enabled()
-            cube.get_by_role("button", name="Start cube", exact=True).click()
+            expect(cube.locator("#current-question")).to_have_text(followup)
             expect(cube.locator("#session-summary")).to_contain_text("Sam")
-            expect(cube.locator("#session-summary")).to_contain_text("Explain a character")
+            assert cube.evaluate("localStorage.getItem('kubo_last_session')") == original_id
+            assert cube.evaluate("localStorage.getItem('kubo_pending_request')") is None
             cube.screenshot(path=str(args.output_dir / "cube-after-server-restart.png"), full_page=True)
-            passed("New server process retained device pairing and saved child/goal in PostgreSQL")
+            passed("Lost committed answer plus server restart: same child/session and exact follow-up recovered without replay")
+            passed("Hint and Repeat kept the question; pending answer contained no raw child text")
 
             parent = phone.new_page()
             parent.goto(server.base + "/parent")
@@ -170,9 +217,76 @@ def main():
             expect(parent.locator("#saved-selection")).to_contain_text("Riley")
             expect(parent.locator("#saved-selection")).to_contain_text("Choose a fair test")
             expect(cube.locator("#session-summary")).to_contain_text("Sam")
+            assert not parent.locator("#family-setup").evaluate("e => e.open"), "Returning setup must be collapsed"
+            cube.get_by_role("button", name="Turn on microphone").click()
+            expect(cube.locator("#voice-state")).to_contain_text("Listening for your answer")
+            cube.locator("#typed-controls summary").click()
+            cube.get_by_label("Test answer").fill("fixture unclear")
+            cube.get_by_role("button", name="Send test answer").click()
+            expect(cube.locator("#cube-message")).to_contain_text("Please give your answer again")
+            expect(cube.locator("#voice-state")).to_contain_text("Listening for your answer")
+            cube.get_by_label("Test answer").fill("fixture unavailable")
+            cube.get_by_role("button", name="Send test answer").click()
+            expect(cube.get_by_role("button", name="Retry this answer")).to_be_visible()
+            expect(cube.get_by_role("button", name="Stop", exact=True)).to_be_enabled()
+            cube.get_by_role("button", name="Retry this answer").click()
+            expect(cube.locator("#cube-message")).to_contain_text("The tutor is unavailable")
+            expect(cube.locator("#current-question")).to_have_text(followup)
+            cube.get_by_role("button", name="Turn off microphone").click()
+            passed("Clarification re-armed the enabled microphone; a tutor outage kept this question with Retry, Repeat and Stop")
+            cube.get_by_label("Test answer").fill("The coat was wet.")
+            cube.get_by_role("button", name="Send test answer").click()
+            expect(cube.locator("#current-question")).to_contain_text("wet coat")
+            cube.get_by_role("button", name="No, try another answer").click()
+            expect(cube.locator("#current-question")).to_contain_text("Tell me what I missed")
+            cube.get_by_label("Test answer").fill("The raindrop could make the paper tear.")
+            cube.get_by_role("button", name="Send test answer").click()
+            expect(cube.locator("#current-question")).to_contain_text("paper that could tear")
+            cube.get_by_role("button", name="Yes, that’s what I meant").click()
+            expect(cube.locator("#cube-status")).to_have_text("Session ended")
+            cube.reload()
+            expect(cube.get_by_role("button", name="Start another session")).to_be_visible()
+            expect(cube.locator("#cube-status")).to_have_text("Session ended")
+
+            parent.get_by_role("button", name="Refresh notes").click()
+            expect(parent.locator("#report-list")).to_contain_text("No notes yet")
+            parent.get_by_label("Child", exact=True).select_option(label="Sam · Ages 7–8")
+            expect(parent.locator("#report-list")).to_contain_text("paper that could tear")
+            expect(parent.locator("#report-list")).not_to_contain_text("wet coat")
+            expect(parent.locator("#report-list")).to_contain_text("Try at home")
+            expect(parent.locator("#report-list")).to_contain_text("Next review")
+            expect(parent.locator("#report-list")).to_contain_text("Yes")
+            assert parent.locator("#report-list article").count() == 1
+            passed("Rejected observation excluded, confirmed note visible only for Sam with hint, home question and next review")
+            passed("Ended state survives reload; returning parent sees goal first, setup collapsed")
+            # Explicitly save Sam again; the confirmed report should shape the next story.
+            parent.get_by_label("Subject", exact=True).select_option("english")
+            parent.get_by_label("Learning goal", exact=True).select_option("explain-a-characters-choice")
+            parent.get_by_role("button", name="Save goal").click()
+            expect(parent.locator("#saved-selection")).to_contain_text("Sam")
+            cube.get_by_role("button", name="Start another session").click()
+            expect(cube.locator("#session-title")).to_have_text("The narrow path")
+            expect(cube.locator("#current-question")).to_contain_text("Think about what Ben heard")
+            expect(cube.locator("#session-summary")).to_contain_text("Sam")
+            cube.locator("#typed-controls summary").click()
+            cube.get_by_label("Test answer").fill("slow turn")
+            is_answer = lambda response: (response.url.endswith("/action") and
+                                           response.request.post_data_json["kind"] == "answer")
+            with cube.expect_response(is_answer, timeout=10000) as late:
+                cube.get_by_role("button", name="Send test answer").click()
+                expect(cube.get_by_role("button", name="Stop", exact=True)).to_be_enabled()
+                cube.get_by_role("button", name="Stop", exact=True).click()
+                expect(cube.locator("#cube-status")).to_have_text("Session ended")
+            assert late.value.status == 409
+            expect(cube.locator("#cube-status")).to_have_text("Session ended")
+            passed("Next visit used a different story and prior hint; Stop beat a pending model answer and remained ended")
+            parent.get_by_label("Child", exact=True).select_option(label="Riley · Ages 9–10")
+            parent.get_by_label("Subject", exact=True).select_option("science")
+            parent.get_by_label("Learning goal", exact=True).select_option("choose-a-fair-test")
+            parent.get_by_role("button", name="Save goal").click()
+            expect(parent.locator("#saved-selection")).to_contain_text("Riley")
             parent.close()
-            cube.get_by_role("button", name="End session", exact=True).click()
-            cube.get_by_role("button", name="Start cube", exact=True).click()
+            cube.get_by_role("button", name="Start another session").click()
             expect(cube.locator("#session-summary")).to_contain_text("Riley")
             expect(cube.locator("#session-summary")).to_contain_text("Ages 9–10")
             expect(cube.locator("#session-summary")).to_contain_text("Science")
@@ -185,7 +299,7 @@ def main():
                   "server_processes": server.pids, "database": "kubo_test",
                   "browser": "Chromium", "contexts": "independent phone and desktop",
                   "https": args.tls, "browser_local_ca_exception": args.tls,
-                  "physical_phone_tested": False}
+                  "physical_phone_tested": False, "tutor": "offline browser test double", "voice_input_tested": False}
         (args.output_dir / "browser-results.json").write_text(json.dumps(report, indent=2) + "\n")
     finally:
         server.stop()
