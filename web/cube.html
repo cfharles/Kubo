@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f4eddf"><title>KUBO · Cube simulator</title><link rel="stylesheet" href="/static/styles.css"><script src="/static/cube.js" defer></script></head>
+<body class="cube-page">
+  <header class="shell"><div class="topbar"><a href="/cube" class="brand" aria-label="KUBO cube simulator"><span class="brand-mark" aria-hidden="true"><span>k</span></span> kubo</a><nav aria-label="Apps"><a href="/parent" class="nav-link">Parent app ↗</a><a href="/cube" class="nav-link" aria-current="page">Cube simulator</a></nav></div></header>
+  <main class="cube-main"><div class="cube-intro"><div class="eyebrow">Your cube, on your Mac</div><h1>Small cube. Big curiosity.</h1><p>A place to connect, choose, and get ready to explore.</p></div>
+    <div class="cube-stage"><div class="cube-visual" aria-hidden="true"><div id="cube-art" class="cube-art" data-state="waiting"><span class="cube-eye"></span><span class="cube-eye"></span><span class="cube-light"></span></div><div class="cube-shadow-label">KUBO · cube simulator</div></div>
+      <section class="cube-panel" aria-label="Cube controls"><div id="cube-status" class="status-pill" role="status" aria-live="polite">Connecting</div>
+        <div id="cube-loading"><h2>A little moment…</h2><p>Getting this browser ready to act as your cube.</p></div>
+        <div id="pairing-panel" hidden><h2>Let’s meet your family.</h2><p>On your phone, open the parent app and enter this code under “Give your cube a home.”</p><div id="pairing-code" class="pair-code" aria-label="Cube pairing code"></div><p id="expiry" class="code-expiry"></p><div class="cube-actions"><button id="check-pairing" type="button" class="primary">Check pairing</button><button id="refresh-code" type="button" class="secondary">Refresh code</button></div></div>
+        <div id="ready-panel" hidden><h2 id="ready-title">Your cube is home.</h2><p>Save a child and learning goal in the parent app. You can close that app before starting here.</p><button id="start-cube" class="start-button" type="button">Start cube</button><p class="help-text">Each start loads the latest saved choice from the server.</p></div>
+        <div id="session-panel" hidden><h2>Ready to explore.</h2><p id="session-family"></p><dl id="session-summary" class="session-details"><div><dt>Child</dt><dd id="session-child"></dd></div><div><dt>Subject</dt><dd id="session-subject"></dd></div><div><dt>Learning goal</dt><dd id="session-goal"></dd></div></dl><p class="help-text">Session loaded successfully. Lessons and voice interaction come in a later milestone.</p><div class="cube-actions"><button id="end-session" class="secondary" type="button">End session</button></div></div>
+        <div id="cube-message" class="notice" role="status" aria-live="polite" hidden></div><button id="retry" class="secondary wide" type="button" style="margin-top:15px" hidden>Retry connection</button><button id="reset-device" class="secondary wide" type="button" style="margin-top:15px" hidden>Set up a new cube</button>
+      </section>
+    </div><p id="connection" class="connection" role="status" aria-live="polite"></p><p class="cube-footer">This browser remembers its cube identity. Pairing connects it to a family; the parent app can run in an entirely separate browser.<br><a href="/parent">Open the parent app</a> · Use fictional family details only.</p>
+  </main>
+</body></html>

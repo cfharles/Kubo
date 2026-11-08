@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#162b46"><title>KUBO · Parent app</title><link rel="stylesheet" href="/static/styles.css"><script src="/static/parent.js" defer></script></head>
+<body>
+  <header class="parent-header"><div class="shell">
+    <div class="topbar"><a href="/parent" class="brand" aria-label="KUBO parent app"><span class="brand-mark" aria-hidden="true"><span>k</span></span> kubo</a><nav aria-label="Apps"><a href="/parent" class="nav-link" aria-current="page">Parent app</a><a href="/cube" class="nav-link">Cube simulator ↗</a></nav></div>
+    <div class="intro"><div><div class="eyebrow">A little curiosity. A world of possibility.</div><h1>Set the next little adventure.</h1><p class="muted">Choose who’s learning and what to explore. Your cube will pick it up when it starts—even after you close this app.</p></div><div class="intro-aside">Parent app on your phone.<br>Cube simulator on your Mac.</div></div>
+  </div></header>
+  <main class="shell parent-main">
+    <section id="loading" class="card loading-card" aria-live="polite"><h2>Opening your family space…</h2><p>Connecting to the KUBO server.</p></section>
+    <section id="auth" class="card auth-card" hidden aria-labelledby="auth-title">
+      <div class="auth-tabs" aria-label="Family account"><button id="register-mode" type="button" aria-pressed="true">New family</button><button id="login-mode" type="button" aria-pressed="false">Existing family</button></div>
+      <h2 id="auth-title">Meet your fictional family.</h2><p class="help-text" id="auth-description">Create a family for this demo. Please use invented names and a demo password.</p>
+      <form id="auth-form" class="stack"><div><label for="family-name">Family name</label><input id="family-name" name="family_name" required minlength="2" maxlength="80" autocomplete="username" placeholder="e.g. The Maple family"></div><div><label for="password">Password</label><input id="password" name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password" aria-describedby="password-help"><p id="password-help" class="help-text">At least 8 characters. Keep it handy to sign in again.</p></div><button id="auth-submit" class="primary" type="submit">Create family</button></form>
+      <div id="auth-message" class="notice" role="status" aria-live="polite" hidden></div>
+    </section>
+    <section id="family-space" hidden aria-label="Family settings">
+      <div class="family-bar"><div><h2 id="family-heading"></h2><p>Your family’s next session, all in one place.</p></div><button type="button" id="logout" class="ghost">Sign out</button></div>
+      <div class="parent-grid">
+        <section class="card" aria-labelledby="children-title"><div class="card-head"><span class="step" aria-hidden="true">01</span><div><h2 id="children-title">Who’s exploring?</h2><p>Add a fictional child to your family.</p></div></div><div id="child-list" class="child-list" aria-label="Children"></div>
+          <form id="child-form" class="inline-form"><div><label for="nickname">Child nickname</label><input id="nickname" required maxlength="40" placeholder="e.g. Milo" autocomplete="off"></div><div><label for="age-band">Age band</label><select id="age-band" required><option value="5-6">5–6</option><option value="7-8" selected>7–8</option><option value="9-10">9–10</option></select></div><div class="form-actions"><button class="secondary" type="submit">Add child</button></div></form><div id="child-message" class="notice" role="status" aria-live="polite" hidden></div>
+        </section>
+        <section class="card" aria-labelledby="pair-title"><div class="card-head"><span class="step" aria-hidden="true">02</span><div><h2 id="pair-title">Give your cube a home.</h2><p>Open the cube simulator on your Mac, then enter its pairing code here.</p></div></div><div id="paired-devices" class="paired-devices" hidden></div>
+          <form id="pair-form" class="pair-form"><div class="field"><label for="pairing-code">Pairing code</label><input id="pairing-code" required minlength="4" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Enter code"></div><button class="secondary" type="submit">Pair cube</button></form><p class="help-text">Each code pairs one cube with this family.</p><div id="pair-message" class="notice" role="status" aria-live="polite" hidden></div>
+        </section>
+        <section class="card goal-card" aria-labelledby="goal-title"><div class="card-head"><span class="step" aria-hidden="true">03</span><div><h2 id="goal-title">Choose the next learning goal.</h2><p>The cube loads this saved choice whenever you press Start cube.</p></div></div>
+          <div id="saved-goal" class="saved-goal" hidden><span class="saved-dot" aria-hidden="true"></span><div><div class="eyebrow">Saved for the next session</div><strong id="saved-selection"></strong><p id="saved-context"></p></div></div>
+          <p id="no-children" class="help-text">Add a child above to choose a learning goal.</p>
+          <form id="goal-form"><fieldset id="goal-fields" style="border:0;padding:0;margin:0;min-width:0" disabled><div class="goal-form"><div><label for="child-choice">Child</label><select id="child-choice" required></select></div><div><label for="subject-choice">Subject</label><select id="subject-choice" required></select></div><div><label for="goal-choice">Learning goal</label><select id="goal-choice" required></select></div></div><div class="save-row"><p>After saving, you can close the app. Your choice is stored on the server for your paired cube.</p><button class="primary" type="submit">Save goal</button></div></fieldset></form><div id="goal-message" class="notice" role="status" aria-live="polite" hidden></div>
+        </section>
+      </div><div id="parent-status" class="notice" role="status" aria-live="polite" hidden></div>
+    </section>
+    <p class="footnote">KUBO · Connection milestone · Use fictional family details only.<br>This demo sets up a session; lessons and voice interaction are not included.</p>
+  </main>
+</body></html>
